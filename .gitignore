@@ -1,0 +1,13 @@
+# User configuration (contains the Prowlarr API key)
+prowlarr.json
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.agents/
+.pi/
+tests/
