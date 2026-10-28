@@ -1,4 +1,4 @@
-#VERSION: 1.46
+# VERSION: 1.56
 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -24,44 +24,77 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+import re
+import urllib.parse
+from typing import NotRequired, TypedDict, get_type_hints
 
-def prettyPrinter(dictionary):
-    dictionary['size'] = anySizeToBytes(dictionary['size'])
-    outtext = "|".join((dictionary["link"], dictionary["name"].replace("|", " "),
-                        str(dictionary["size"]), str(dictionary["seeds"]),
-                        str(dictionary["leech"]), dictionary["engine_url"]))
-    if 'desc_link' in dictionary:
-        outtext = "|".join((outtext, dictionary["desc_link"]))
+SearchResults = TypedDict('SearchResults', {
+    'link': str,
+    'name': str,
+    'size': float | int | str,
+    'seeds': int,
+    'leech': int,
+    'engine_url': str,
+    'desc_link': NotRequired[str],  # Optional
+    'pub_date': NotRequired[int]  # Optional
+})
+
+
+# these fields contain untrusted values as they are unescaped or not encoded
+_unescapedFields = tuple(field for field in get_type_hints(SearchResults) if field not in {'name'})
+
+
+def prettyPrinter(dictionary: SearchResults) -> None:
+    delimiter = "|"
+
+    # safety check for unexpected delimiter in values
+    for key in _unescapedFields:
+        value = str(dictionary.get(key, ''))
+        if delimiter in value:
+            raise ValueError(f'found unexpected delimiter character ({delimiter}) in value. Key: "{key}". Value: "{value}".')
+
+    outtext = delimiter.join((
+        dictionary["link"],
+        urllib.parse.quote(dictionary["name"]),
+        str(anySizeToBytes(dictionary['size'])),
+        str(dictionary["seeds"]),
+        str(dictionary["leech"]),
+        dictionary["engine_url"],
+        dictionary.get("desc_link", ""),  # Optional
+        str(dictionary.get("pub_date", -1))  # Optional
+    ))
 
     # fd 1 is stdout
     with open(1, 'w', encoding='utf-8', closefd=False) as utf8stdout:
         print(outtext, file=utf8stdout)
 
 
-def anySizeToBytes(size_string):
+_sizeUnitRegex: re.Pattern[str] = re.compile(r"^(?P<size>\d*\.?\d+) *(?P<unit>[a-z]+)?", re.IGNORECASE)
+
+
+def anySizeToBytes(size_string: float | int | str) -> int:  # noqa: PYI041
     """
     Convert a string like '1 KB' to '1024' (bytes)
-    """
-    # separate integer from unit
-    try:
-        size, unit = size_string.split()
-    except:
-        try:
-            size = size_string.strip()
-            unit = ''.join([c for c in size if c.isalpha()])
-            if len(unit) > 0:
-                size = size[:-len(unit)]
-        except:
-            return -1
-    if len(size) == 0:
-        return -1
-    size = float(size)
-    if len(unit) == 0:
-        return int(size)
-    short_unit = unit.upper()[0]
 
-    # convert
-    units_dict = {'T': 40, 'G': 30, 'M': 20, 'K': 10}
-    if short_unit in units_dict:
-        size = size * 2**units_dict[short_unit]
-    return int(size)
+    The canonical type for `size_string` is `str`. However numeric types are also accepted in order to
+    accommodate poorly written plugins.
+    """
+
+    if isinstance(size_string, int):
+        return size_string
+    if isinstance(size_string, float):
+        return round(size_string)
+
+    match = _sizeUnitRegex.match(size_string.strip())
+    if match is None:
+        return -1
+
+    size = float(match.group('size'))  # need to match decimals
+    unit = match.group('unit')
+
+    if unit is not None:
+        units_exponents = {'T': 40, 'G': 30, 'M': 20, 'K': 10}
+        exponent = units_exponents.get(unit[0].upper(), 0)
+        size *= 2**exponent
+
+    return round(size)
